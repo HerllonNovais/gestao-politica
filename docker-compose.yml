@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  # Banco de Dados
+  db:
+    image: postgres:13
+    env_file: .env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Backend (FastAPI)
+  backend:
+    build: ./backend
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # Frontend (Vue.js)
+  frontend:
+    build: ./frontend
+    env_file: .env
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    stdin_open: true
+    tty: true
+
+  # Nginx (Proxy Reverso)
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+      - frontend
+
+  # Metabase (Dashboard)
+  metabase:
+    image: metabase/metabase
+    env_file: .env
+    ports:
+      - "3001:3000"
+    volumes:
+      - metabase_data:/metabase-data
+    depends_on:
+      - db
+
+  # Evolution API (WhatsApp)
+  evolution:
+    image: evolution-api/evolution-api:latest
+    env_file: .env
+    ports:
+      - "3003:3000"
+    volumes:
+      - evolution_data:/evolution-api
+    environment:
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+  # N8N (Automações)
+  n8n:
+    image: n8nio/n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # Flowise (AI Workflows)
+  flowise:
+    image: flowiseai/flowise
+    ports:
+      - "3002:3000"
+    volumes:
+      - flowise_data:/root/.flowise
+
+volumes:
+  postgres_data:
+  metabase_data:
+  n8n_data:
+  flowise_data:
+  evolution_data:
